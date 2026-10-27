@@ -1,0 +1,13 @@
+{
+  "name": "pdf-logic-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PDF逻辑解析工具：上传PDF，AI提取结构化笔记并生成逻辑框图",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "start": "node dev-server.js",
+    "vendor": "node scripts-vendor.js"
+  },
+  "engines": { "node": ">=18" }
+}
