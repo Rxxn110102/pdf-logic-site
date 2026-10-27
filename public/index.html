@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>PDF逻辑解析工具</title>
+<meta name="description" content="上传 PDF，AI 自动提取要点、核心观点、方法、推理过程与结论，并生成可下载的逻辑框图。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: analyst's desk — intake strip on top, notes sheet (left) beside the argument map (right); stacks on phones. */
+:root {
+  --paper: #f3f5f8;
+  --sheet: #ffffff;
+  --ink: #17212e;
+  --muted: #5a6575;
+  --rule: #dce1e9;
+  --accent: #2c4bb4;
+  --accent-soft: #e6ebfa;
+  --mark: #f5dc6a;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
+  --ok: #2b7a4b;
+  --font-display: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f131a; --sheet: #161c26; --ink: #e5e9f0; --muted: #98a3b5; --rule: #283142;
+    --accent: #93a9ff; --accent-soft: #1e2847; --mark: #7d6a1e; --danger: #ff8f84; --danger-soft: #3a1d1b; --ok: #6fcf97;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f131a; --sheet: #161c26; --ink: #e5e9f0; --muted: #98a3b5; --rule: #283142;
+  --accent: #93a9ff; --accent-soft: #1e2847; --mark: #7d6a1e; --danger: #ff8f84; --danger-soft: #3a1d1b; --ok: #6fcf97;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
+body {
+  background: var(--paper); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.65;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1440px; margin: 0 auto; display: grid; gap: 18px; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; }
+.brand h1 { font-family: var(--font-display); font-size: 1.65rem; line-height: 1.2; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: .9rem; }
+.engine { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--muted);
+  border: 1px solid var(--rule); background: var(--sheet); padding: 4px 12px; border-radius: 999px; }
+.engine .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.engine[data-mode="claude"] .dot, .engine[data-mode="api"] .dot { background: var(--ok); }
+.engine[data-mode="nokey"] .dot { background: var(--danger); }
+
+/* Intake */
+.intake { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: stretch; }
+.drop {
+  position: relative; display: flex; align-items: center; gap: 16px;
+  border: 1.5px dashed var(--rule); border-radius: var(--radius); background: var(--sheet);
+  padding: 16px 20px; cursor: pointer; transition: border-color .15s, background .15s; min-width: 0;
+}
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.drop svg { flex: none; color: var(--accent); }
+.drop strong { display: block; font-weight: 700; }
+.drop span { color: var(--muted); font-size: .85rem; }
+.drop .fname { color: var(--ink); font-family: var(--font-mono); font-size: .82rem; overflow-wrap: anywhere; }
+.side { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--rule); background: var(--sheet); border-radius: 8px;
+  padding: 7px 14px; font-size: .88rem; cursor: pointer; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--sheet); font-weight: 500; }
+.btn.primary:hover:not(:disabled) { color: var(--sheet); filter: brightness(1.08); }
+.btn.small { padding: 4px 10px; font-size: .8rem; }
+
+/* Access code */
+.access { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 16px; font-size: .88rem; }
+.access label { font-weight: 500; }
+.access input { border: 1px solid var(--rule); border-radius: 6px; padding: 6px 10px; background: var(--paper); min-width: 0; flex: 1 1 220px; max-width: 360px; }
+.access span { color: var(--muted); font-size: .8rem; }
+/* Progress */
+.progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; font-size: .86rem; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; margin: 0; padding: 0; counter-reset: s; }
+.steps li { display: flex; align-items: center; gap: 7px; color: var(--muted); counter-increment: s; }
+.steps li::before {
+  content: counter(s); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: .72rem; font-family: var(--font-mono); border: 1px solid var(--rule); background: var(--sheet);
+}
+.steps li[data-s="active"] { color: var(--ink); font-weight: 500; }
+.steps li[data-s="active"]::before { border-color: var(--accent); color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.steps li[data-s="done"]::before { content: "✓"; background: var(--ok); border-color: var(--ok); color: var(--sheet); }
+.steps li[data-s="error"]::before { content: "!"; background: var(--danger); border-color: var(--danger); color: var(--sheet); }
+.detail { color: var(--muted); font-family: var(--font-mono); font-size: .78rem; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
+@media (prefers-reduced-motion: reduce) { .steps li::before { animation: none !important; } }
+
+.alert { display: flex; gap: 10px; align-items: flex-start; border-radius: 8px; padding: 10px 14px;
+  background: var(--danger-soft); color: var(--danger); font-size: .9rem; border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent); }
+.alert p { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.alert button { background: none; border: 0; color: inherit; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+
+/* Panes */
+.panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 960px) { .panes { grid-template-columns: minmax(0, 1fr); } .intake { grid-template-columns: minmax(0, 1fr); } .side { flex-direction: row; flex-wrap: wrap; } }
+.pane { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); min-width: 0; display: flex; flex-direction: column; }
+.pane-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding: 12px 18px; border-bottom: 1px solid var(--rule); }
+.pane-head h2 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+.tag { font-family: var(--font-body); font-size: .7rem; font-weight: 500; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px;
+  background: var(--mark); color: var(--ink); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.pane-diagram { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+@media (max-width: 960px) { .pane-diagram { position: static; } }
+
+/* Section index */
+.index { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 0; }
+.index a { font-size: .78rem; text-decoration: none; color: var(--muted); border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; }
+.index a[data-has="1"] { color: var(--ink); border-color: var(--accent); }
+.index a[data-has="0"] { text-decoration: line-through; opacity: .6; }
+
+/* Notes */
+.notes { padding: 6px 26px 26px; overflow-wrap: anywhere; min-width: 0; }
+.notes h1 { font-family: var(--font-display); font-size: 1.4rem; line-height: 1.35; margin: 18px 0 6px; text-wrap: balance; }
+.notes h2 { font-family: var(--font-display); font-size: 1.12rem; margin: 26px 0 8px; display: inline-block; padding: 0 4px;
+  background: linear-gradient(transparent 58%, var(--mark) 58%, var(--mark) 92%, transparent 92%); scroll-margin-top: 20px; }
+.notes h3 { font-size: 1rem; margin: 18px 0 6px; }
+.notes p, .notes li { max-width: 68ch; }
+.notes ul, .notes ol { padding-left: 1.4em; }
+.notes li { margin: 4px 0; }
+.notes li::marker { color: var(--accent); font-weight: 700; }
+.notes blockquote { margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--accent); color: var(--muted); }
+.notes code { font-family: var(--font-mono); font-size: .85em; background: var(--paper); padding: 1px 5px; border-radius: 4px; }
+.notes pre { background: var(--paper); padding: 12px; border-radius: 8px; overflow-x: auto; }
+.notes table { border-collapse: collapse; display: block; overflow-x: auto; }
+.notes th, .notes td { border: 1px solid var(--rule); padding: 5px 10px; }
+.notes strong { color: var(--ink); }
+.caret::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Diagram */
+.diagram { padding: 18px; overflow: auto; max-height: calc(100vh - 140px); min-height: 360px; }
+@media (max-width: 960px) { .diagram { max-height: none; } }
+.diagram svg { display: block; margin: 0 auto; height: auto; }
+.diagram.fit svg { max-width: 100% !important; width: 100%; }
+.diagram.natural svg { max-width: none !important; }
+.placeholder { color: var(--muted); font-size: .9rem; display: grid; place-items: center; text-align: center; min-height: 320px; padding: 20px; }
+.mm-error { border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); background: var(--danger-soft); border-radius: 8px; padding: 12px 14px; display: grid; gap: 10px; }
+.mm-error h3 { margin: 0; font-size: .95rem; color: var(--danger); }
+.mm-error p { margin: 0; font-size: .85rem; }
+.mm-error pre { margin: 0; font-family: var(--font-mono); font-size: .78rem; background: var(--sheet); border-radius: 6px; padding: 10px; overflow-x: auto; color: var(--ink); max-height: 260px; }
+.mm-error .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.legend { padding: 8px 18px 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .78rem; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.legend span { font-family: var(--font-mono); }
+
+/* Toast */
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
+  background: var(--ink); color: var(--paper); padding: 8px 16px; border-radius: 8px; font-size: .88rem; z-index: 20; max-width: calc(100vw - 32px); }
+footer { color: var(--muted); font-size: .78rem; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>PDF逻辑解析工具</h1>
+      <p>上传文字版 PDF，得到要点、观点、方法、推理链与结论，以及一张论证逻辑框图。</p>
+    </div>
+    <div class="engine" id="engine" data-mode="detect"><i class="dot"></i><span id="engineText">正在检测分析引擎…</span></div>
+  </header>
+
+  <section class="intake" aria-label="上传 PDF">
+    <label class="drop" id="drop">
+      <input type="file" id="fileInput" accept="application/pdf,.pdf" aria-label="选择 PDF 文件">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 17v-6"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5"/></svg>
+      <div>
+        <strong>拖入 PDF，或点击选择文件</strong>
+        <span id="dropHint">仅支持文字版 PDF，在浏览器内解析，原文件不会上传。</span>
+      </div>
+    </label>
+    <div class="side">
+      <button class="btn primary" id="analyzeBtn" disabled>开始解析</button>
+      <button class="btn" id="cancelBtn" hidden>停止</button>
+    </div>
+  </section>
+
+  <div class="access" id="access" hidden>
+    <label for="accessCode">访问码</label>
+    <input id="accessCode" type="password" autocomplete="off" placeholder="请输入网站管理员提供的访问码">
+    <span>本站需要访问码才能使用 AI 分析。</span>
+  </div>
+
+  <div class="progress" id="progress" hidden>
+    <ol class="steps">
+      <li id="st1">读取 PDF 文字</li>
+      <li id="st2">AI 分析文档</li>
+      <li id="st3">绘制逻辑框图</li>
+    </ol>
+    <span class="detail" id="detail"></span>
+  </div>
+
+  <div class="alert" id="alert" role="alert" hidden><p id="alertText"></p><button id="alertClose" aria-label="关闭提示">×</button></div>
+
+  <main class="panes">
+    <section class="pane" aria-labelledby="notesTitle">
+      <div class="pane-head">
+        <h2 id="notesTitle">结构化笔记 <span class="tag" id="notesTag">示例</span></h2>
+        <div class="tools">
+          <button class="btn small" id="copyMd">复制</button>
+          <button class="btn small" id="dlMd">下载 .md</button>
+        </div>
+      </div>
+      <nav class="index" id="index" aria-label="板块目录"></nav>
+      <article class="notes" id="notes"></article>
+    </section>
+
+    <section class="pane pane-diagram" aria-labelledby="diagTitle">
+      <div class="pane-head">
+        <h2 id="diagTitle">逻辑框图 <span class="tag" id="diagTag">示例</span></h2>
+        <div class="tools">
+          <button class="btn small" id="fitBtn" aria-pressed="true">适应宽度</button>
+          <button class="btn small" id="codeBtn">查看代码</button>
+          <button class="btn small" id="dlSvg">下载 .svg</button>
+        </div>
+      </div>
+      <div class="diagram fit" id="diagram"><div class="placeholder">正在加载绘图组件…</div></div>
+      <div class="legend"><span id="diagMeta">—</span><em>箭头方向 = 论证推进方向</em></div>
+    </section>
+  </main>
+
+  <footer>PDF 在你的浏览器内解析，只有提取出的文字会经本站服务器发送给 AI 模型处理，本站不保存文档内容。AI 生成的解析可能有遗漏或偏差，重要内容请对照原文核实。</footer>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/pdf.min.js"></script>
+<script>window.pdfjsLib||document.write('<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"><\/script>')</script>
+<script>window.pdfjsLib||document.write('<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"><\/script>')</script>
+<script src="vendor/pdf.worker.min.js"></script>
+<script>window.pdfjsWorker||document.write('<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"><\/script>')</script>
+<script>window.pdfjsWorker||document.write('<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"><\/script>')</script>
+<script src="vendor/marked.min.js"></script>
+<script>window.marked||document.write('<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\/script>')</script>
+<script>window.marked||document.write('<script src="https://unpkg.com/marked@12.0.2/marked.min.js"><\/script>')</script>
+<script src="vendor/purify.min.js"></script>
+<script>window.DOMPurify||document.write('<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"><\/script>')</script>
+<script>window.DOMPurify||document.write('<script src="https://unpkg.com/dompurify@3.1.6/dist/purify.min.js"><\/script>')</script>
+<script src="vendor/mermaid.min.js"></script>
+<script>window.mermaid||document.write('<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"><\/script>')</script>
+<script>window.mermaid||document.write('<script src="https://unpkg.com/mermaid@10.9.1/dist/mermaid.min.js"><\/script>')</script>
+<script>
+(() => {
+"use strict";
+
+/* ---------- 示例内容（首次打开时展示） ---------- */
+const SAMPLE_MD = `# 《Attention Is All You Need》逻辑解析
+
+## 要点
+- 提出 Transformer：一种完全基于注意力机制的序列转换模型，不再使用循环或卷积结构。
+- 模型由编码器和解码器堆叠组成，核心部件是多头自注意力与位置前馈网络。
+- 用位置编码向模型注入词序信息。
+- 在 WMT 2014 英德、英法翻译任务上取得当时最好的 BLEU 成绩，训练成本明显更低。
+
+## 核心观点
+- 循环网络必须按时间步顺序计算，限制了并行训练，也让长距离依赖难以学习。
+- 自注意力让任意两个位置一步直接相连，路径长度为常数，更利于捕捉长程关系。
+- 只靠注意力就足以构建高质量的序列模型，循环结构并非必需。
+
+## 采用方法
+- **缩放点积注意力**：用查询与键的点积计算权重，除以维度平方根防止梯度过小。
+- **多头注意力**：把表示投影到多个子空间并行计算注意力，再拼接，让模型同时关注不同类型的关系。
+- **正弦位置编码**：用不同频率的正弦、余弦函数表示位置。
+- **对比实验**：在两个机器翻译基准上与 RNN、CNN 类模型比较质量与训练开销；另做消融实验和英语句法分析任务验证泛化能力。
+
+## 逻辑推理过程
+1. **问题**：主流序列模型依赖循环计算，难以并行，长距离依赖学习困难。
+2. **观察**：注意力机制已能有效建模依赖关系，但此前只作为循环网络的附加部件。
+3. **假设**：如果完全去掉循环，只用注意力，或许能同时获得并行性和更短的依赖路径。
+4. **设计**：据此构建 Transformer，并用位置编码弥补失去的顺序信息，用多头机制增强表达力。
+5. **分析**：从每层计算复杂度、可并行程度、最长路径长度三方面论证自注意力的优势。
+6. **验证**：翻译实验质量更高、训练更快；消融实验说明多头数量、键维度等设计各有作用。
+
+## 主要结论
+- Transformer 在机器翻译上超过此前所有模型（含集成模型），而训练时间只占一小部分。
+- 基于注意力的模型可以推广到其他任务，作者计划扩展到图像、音频等模态。`;
+
+const SAMPLE_MMD = `flowchart TD
+  subgraph P["问题与动机"]
+    A1["循环网络难以并行"] --> A3["研究问题：能否去掉循环"]
+    A2["长距离依赖难学习"] --> A3
+  end
+  A3 --> B1["假设：只用注意力即可建模序列"]
+  subgraph M["方法设计"]
+    B1 --> C1["缩放点积注意力"]
+    B1 --> C2["多头注意力"]
+    B1 --> C3["正弦位置编码"]
+    C1 --> C4["Transformer 编码器-解码器"]
+    C2 --> C4
+    C3 --> C4
+  end
+  C4 --> D1["复杂度与路径长度分析"]
+  C4 --> D2["WMT 翻译实验"]
+  C4 --> D3["消融实验"]
+  D1 -->|"理论支撑"| E1["结论：质量更高且训练更快"]
+  D2 -->|"实证支撑"| E1
+  D3 -->|"设计合理性"| E1
+  E1 --> E2["展望：推广到其他模态"]`;
+
+const SECTIONS = ["要点", "核心观点", "采用方法", "逻辑推理过程", "主要结论"];
+const MAX_CHARS = 60000;           // 发送给模型的文字上限
+const DEFAULTS = {
+  openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-5-5" },
+};
+
+const $ = (s) => document.querySelector(s);
+const state = {
+  file: null, fileBase: "示例", isSample: true,
+  markdown: SAMPLE_MD, mermaid: SAMPLE_MMD, svgOk: false,
+  busy: false, ctl: null,
+  server: null, mode: "detect",
+  showCode: false,
+};
+
+/* ---------- 小工具 ---------- */
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+function showError(msg) { $("#alertText").textContent = msg; $("#alert").hidden = false; }
+function clearError() { $("#alert").hidden = true; }
+$("#alertClose").addEventListener("click", clearError);
+window.addEventListener("error", (e) => { console.error(e.error || e.message); });
+window.addEventListener("unhandledrejection", (e) => {
+  console.error(e.reason);
+  showError("发生了意外错误：" + (e.reason && e.reason.message ? e.reason.message : String(e.reason)) + "。页面仍可继续使用，请重试。");
+});
+function store(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+function load(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function setStep(n, s) { const el = $("#st" + n); if (el) el.dataset.s = s || ""; }
+function setDetail(t) { $("#detail").textContent = t || ""; }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function libsReady() { return typeof pdfjsLib !== "undefined" && typeof marked !== "undefined" && typeof DOMPurify !== "undefined" && typeof mermaid !== "undefined"; }
+
+/* ---------- Markdown 渲染 ---------- */
+function slug(text) { return "sec-" + SECTIONS.indexOf(text.trim()); }
+function renderNotes(md, streaming) {
+  const el = $("#notes");
+  if (typeof marked === "undefined" || typeof DOMPurify === "undefined") { el.textContent = md; return; }
+  let html;
+  try { html = DOMPurify.sanitize(marked.parse(md || "")); }
+  catch (e) { el.textContent = md; return; }
+  el.innerHTML = html;
+  el.classList.toggle("caret", !!streaming);
+  // 给五个板块加锚点，并更新目录
+  const found = new Set();
+  el.querySelectorAll("h2").forEach((h) => {
+    const name = SECTIONS.find((s) => h.textContent.replace(/\s/g, "").includes(s));
+    if (name) { h.id = slug(name); found.add(name); }
+  });
+  $("#index").innerHTML = SECTIONS.map((s) =>
+    `<a href="#${slug(s)}" data-has="${found.has(s) ? 1 : (streaming ? "" : 0)}">${s}</a>`).join("");
+}
+$("#index").addEventListener("click", (e) => {
+  const a = e.target.closest("a"); if (!a) return;
+  e.preventDefault();
+  const t = document.getElementById(a.getAttribute("href").slice(1));
+  if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+/* ---------- Mermaid ---------- */
+function isDark() {
+  const t = document.documentElement.dataset.theme;
+  if (t === "dark") return true; if (t === "light") return false;
+  return window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function initMermaid(dark) {
+  const v = dark
+    ? { primaryColor: "#1e2847", primaryTextColor: "#e5e9f0", primaryBorderColor: "#93a9ff", lineColor: "#98a3b5",
+        clusterBkg: "#121823", clusterBorder: "#283142", edgeLabelBackground: "#161c26", tertiaryColor: "#161c26", background: "#161c26", titleColor: "#e5e9f0" }
+    : { primaryColor: "#e6ebfa", primaryTextColor: "#17212e", primaryBorderColor: "#2c4bb4", lineColor: "#5a6575",
+        clusterBkg: "#f6f7fa", clusterBorder: "#dce1e9", edgeLabelBackground: "#ffffff", tertiaryColor: "#ffffff", background: "#ffffff", titleColor: "#17212e" };
+  mermaid.initialize({
+    startOnLoad: false, securityLevel: "strict", theme: "base",
+    fontFamily: '"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif',
+    themeVariables: Object.assign({ fontSize: "14px" }, v),
+    flowchart: { htmlLabels: false, curve: "basis", padding: 12, nodeSpacing: 36, rankSpacing: 44, wrappingWidth: 180 },
+  });
+}
+
+// 常见语法问题的自动修正：中文引号、未加引号的节点文字、缺少图表类型声明
+function autofixMermaid(code) {
+  let c = code.replace(/\r/g, "").replace(/[“”]/g, (q) => (q === "“" ? "「" : "」")).replace(/[‘’]/g, "'");
+  c = c.replace(/^\s*```(?:mermaid)?\s*/i, "").replace(/```\s*$/, "").trim();
+  if (!/^(flowchart|graph)\b/i.test(c)) c = "flowchart TD\n" + c;
+  c = c.replace(/\b([A-Za-z][\w]*)\[(?!["\[(])([^\[\]\n"]+)\]/g, '$1["$2"]');
+  c = c.replace(/\b([A-Za-z][\w]*)\((?![(\["])([^()\n"]+)\)/g, '$1("$2")');
+  c = c.replace(/\b([A-Za-z][\w]*)\{(?![{"])([^{}\n"]+)\}/g, '$1{"$2"}');
+  c = c.replace(/\|([^|"\n]+)\|/g, '|"$1"|');
+  return c;
+}
+
+let renderSeq = 0;
+async function tryRender(code, dark) {
+  const id = "mmd" + Date.now() + "_" + (++renderSeq);
+  try {
+    await mermaid.parse(code);
+    const { svg } = await mermaid.render(id, code);
+    return { svg };
+  } catch (err) {
+    document.getElementById(id)?.remove();
+    document.getElementById("d" + id)?.remove();
+    return { error: (err && (err.message || err.str)) || String(err) };
+  }
+}
+
+async function renderDiagram(code) {
+  const box = $("#diagram");
+  state.svgOk = false;
+  updateButtons();
+  if (typeof mermaid === "undefined") {
+    box.innerHTML = '<div class="placeholder">绘图组件加载失败，请检查网络后刷新页面。</div>';
+    return false;
+  }
+  if (!code || !code.trim()) {
+    box.innerHTML = '<div class="placeholder">AI 没有返回框图代码。可以点击“开始解析”重试。</div>';
+    return false;
+  }
+  initMermaid(isDark());
+  let r = await tryRender(code);
+  if (r.error) {
+    const fixed = autofixMermaid(code);
+    if (fixed !== code) {
+      const r2 = await tryRender(fixed);
+      if (!r2.error) { state.mermaid = fixed; r = r2; }
+    }
+  }
+  if (r.error) { showMermaidError(r.error, state.mermaid); return false; }
+  box.innerHTML = r.svg;
+  const nodes = (state.mermaid.match(/\b[A-Za-z][\w]*\s*[\[({]/g) || []).length;
+  const edges = (state.mermaid.match(/-->|---|-\.->|==>/g) || []).length;
+  $("#diagMeta").textContent = `约 ${nodes} 个节点 · ${edges} 条连线`;
+  state.svgOk = true;
+  if (state.showCode) appendCode();
+  updateButtons();
+  return true;
+}
+
+function showMermaidError(msg, code) {
+  const short = String(msg).split("\n").slice(0, 6).join("\n");
+  $("#diagram").innerHTML = `<div class="mm-error">
+    <h3>框图代码有语法错误，无法绘制</h3>
+    <p>AI 返回的 Mermaid 代码不符合语法，已尝试自动修正但仍失败。可以让 AI 重新修正，或复制代码手动修改。</p>
+    <pre>${escapeHtml(short)}</pre>
+    <details><summary>查看原始代码</summary><pre>${escapeHtml(code)}</pre></details>
+    <div class="row"><button class="btn small primary" id="fixBtn">让 AI 修正框图</button><button class="btn small" id="copyMmd">复制代码</button></div>
+  </div>`;
+  $("#diagMeta").textContent = "框图语法错误";
+  $("#fixBtn").addEventListener("click", () => fixWithAI(msg));
+  $("#copyMmd").addEventListener("click", () => copyText(code));
+}
+
+function appendCode() {
+  const old = $("#codeView"); if (old) old.remove();
+  const pre = document.createElement("pre");
+  pre.id = "codeView";
+  pre.style.cssText = "margin-top:16px;font-family:var(--font-mono);font-size:.78rem;background:var(--paper);padding:12px;border-radius:8px;overflow-x:auto";
+  pre.textContent = state.mermaid;
+  $("#diagram").appendChild(pre);
+}
+$("#codeBtn").addEventListener("click", () => {
+  state.showCode = !state.showCode;
+  $("#codeBtn").textContent = state.showCode ? "隐藏代码" : "查看代码";
+  if (state.showCode) appendCode(); else $("#codeView")?.remove();
+});
+$("#fitBtn").addEventListener("click", () => {
+  const box = $("#diagram"); const fit = box.classList.toggle("fit");
+  box.classList.toggle("natural", !fit);
+  $("#fitBtn").textContent = fit ? "适应宽度" : "原始大小";
+  $("#fitBtn").setAttribute("aria-pressed", String(fit));
+});
+
+// 主题切换后重绘
+function onThemeChange() { if (state.svgOk && !state.busy) renderDiagram(state.mermaid); }
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onThemeChange); } catch (_) {}
+new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+/* ---------- PDF 解析 ---------- */
+async function extractPdfText(file) {
+  if (typeof pdfjsLib === "undefined") throw new Error("PDF 解析组件没有加载成功，请检查网络后刷新页面。");
+  let buf;
+  try { buf = await file.arrayBuffer(); } catch (_) { throw new Error("无法读取这个文件，请重新选择。"); }
+  let pdf;
+  try {
+    pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true }).promise;
+  } catch (e) {
+    const n = e && e.name;
+    if (n === "PasswordException") throw new Error("这个 PDF 设置了密码，请先解除密码保护再上传。");
+    if (n === "InvalidPDFException") throw new Error("文件不是有效的 PDF，或已经损坏。");
+    throw new Error("PDF 解析失败：" + (e && e.message ? e.message : "未知错误"));
+  }
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    setDetail(`第 ${i} / ${pdf.numPages} 页`);
+    try {
+      const page = await pdf.getPage(i);
+      const tc = await page.getTextContent();
+      let s = "";
+      for (const it of tc.items) { if (typeof it.str === "string") { s += it.str; s += it.hasEOL ? "\n" : ""; } }
+      pages.push(s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim());
+      page.cleanup();
+    } catch (_) { pages.push(""); }
+    if (state.ctl && state.ctl.signal.aborted) throw Object.assign(new Error("已停止"), { cancelled: true });
+  }
+  const text = pages.map((p, i) => `[第${i + 1}页]\n${p}`).join("\n\n");
+  const real = pages.join("").replace(/\s/g, "").length;
+  try { pdf.destroy(); } catch (_) {}
+  if (real < Math.max(40, pdf.numPages * 15)) {
+    throw new Error("没有从这个 PDF 中提取到足够的文字，它可能是扫描图片版。本工具目前只支持文字版 PDF。");
+  }
+  return { text, pages: pdf.numPages, chars: real };
+}
+
+function clip(text) {
+  if (text.length <= MAX_CHARS) return { text, clipped: false };
+  const head = Math.floor(MAX_CHARS * 0.8), tail = MAX_CHARS - head;
+  return { text: text.slice(0, head) + "\n\n……（中间部分因篇幅过长省略）……\n\n" + text.slice(-tail), clipped: true };
+}
+
+/* ---------- 提示词与解析 ---------- */
+function parseOutput(t) {
+  const MK = "<<<MARKDOWN>>>", MM = "<<<MERMAID>>>", END = "<<<END>>>";
+  const mi = t.indexOf(MK), gi = t.indexOf(MM), ei = t.indexOf(END);
+  let md, mm = "";
+  if (gi >= 0) {
+    md = t.slice(mi >= 0 && mi < gi ? mi + MK.length : 0, gi);
+    mm = t.slice(gi + MM.length, ei > gi ? ei : undefined);
+  } else {
+    md = mi >= 0 ? t.slice(mi + MK.length) : t;
+    const f = md.match(/```mermaid\s*([\s\S]*?)```/i);
+    if (f) { mm = f[1]; md = md.replace(f[0], ""); }
+  }
+  md = md.replace(END, "").replace(/^\s*```(?:markdown|md)?\s*\n/i, "").replace(/\n```\s*$/, "").trim();
+  mm = mm.replace(/^\s*```(?:mermaid)?\s*/i, "").replace(/```\s*$/, "").trim();
+  return { md, mm };
+}
+
+/* ---------- 调用后端 ---------- */
+const ERROR_MARK = "\n<<<ERROR>>>";
+function cancelledError() { return Object.assign(new Error("已停止分析。"), { cancelled: true }); }
+
+// payload: {text, fileName} 或 {mode:"fix", code, error}
+async function callModel(payload, onText, signal) {
+  let res;
+  try {
+    res = await fetch("api/analyze", {
+      method: "POST", signal,
+      headers: { "content-type": "application/json", "x-access-code": $("#accessCode").value.trim() },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    if (signal.aborted) throw cancelledError();
+    throw new Error("网络连接失败，请检查网络后重试。");
+  }
+  if (!res.ok) {
+    let msg = "";
+    try { const j = await res.json(); msg = j.error || ""; if (j.code === "bad_access_code") { $("#access").hidden = false; $("#accessCode").focus(); } } catch (_) {}
+    if (!msg) msg = res.status === 404 ? "找不到分析接口，网站后端可能没有部署成功。" : res.status >= 500 ? `服务器出错（${res.status}），请稍后重试。` : `请求失败（${res.status}）。`;
+    throw new Error(msg);
+  }
+  if (!res.body) throw new Error("服务器没有返回内容，请重试。");
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let full = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      full += dec.decode(value, { stream: true });
+      const k = full.indexOf(ERROR_MARK);
+      if (k >= 0) { const msg = full.slice(k + ERROR_MARK.length).trim(); throw Object.assign(new Error(msg || "AI 服务中途出错，请重试。"), { partial: full.slice(0, k) }); }
+      onText(full);
+    }
+  } catch (e) {
+    if (signal.aborted) throw Object.assign(cancelledError(), { partial: full });
+    if (e && e.partial !== undefined) throw e;
+    throw Object.assign(new Error("与服务器的连接中断，请重试。"), { partial: full });
+  }
+  full += dec.decode();
+  if (!full.trim()) throw new Error("AI 没有返回内容，请重试。");
+  return full;
+}
+
+/* ---------- 主流程 ---------- */
+let frame = 0;
+async function analyze() {
+  if (state.busy || !state.file) return;
+  if (!libsReady()) { showError("页面组件没有加载完整，请检查网络后刷新页面。"); return; }
+  if (state.server && !state.server.configured) { showError("网站还没有配置 AI 模型密钥，暂时无法分析。请联系网站管理员。"); return; }
+  if (state.server && state.server.accessCodeRequired && !$("#accessCode").value.trim()) {
+    $("#access").hidden = false; $("#accessCode").focus();
+    showError("请先输入访问码。"); return;
+  }
+  clearError();
+  state.busy = true; state.ctl = new AbortController();
+  updateButtons();
+  $("#progress").hidden = false;
+  [1, 2, 3].forEach((n) => setStep(n, ""));
+  const signal = state.ctl.signal;
+  let step = 1, lastText = "";
+  try {
+    setStep(1, "active");
+    const { text, pages, chars } = await extractPdfText(state.file);
+    const { text: sent, clipped } = clip(text);
+    setStep(1, "done");
+    if (clipped) toast("文档较长，已截取开头和结尾部分进行分析");
+
+    step = 2; setStep(2, "active");
+    setDetail(`${pages} 页 · ${chars.toLocaleString()} 字${clipped ? "（已截取）" : ""} · 等待 AI 回应…`);
+    $("#notesTag").textContent = "生成中"; $("#notesTag").hidden = false;
+    $("#diagTag").textContent = "等待"; $("#diagTag").hidden = false;
+    $("#notes").innerHTML = '<p class="placeholder" style="min-height:200px">AI 正在阅读文档…</p>';
+    $("#index").innerHTML = "";
+    $("#diagram").innerHTML = '<div class="placeholder">笔记生成后开始绘制框图…</div>';
+    $("#diagMeta").textContent = "—";
+    state.isSample = false; state.svgOk = false; updateButtons();
+
+    const out = await callModel({ text: sent, fileName: state.fileBase }, (full) => {
+      lastText = full;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const { md } = parseOutput(full.split("<<<MERMAID>>>")[0]);
+        renderNotes(md, true);
+        setDetail(`已接收 ${full.length.toLocaleString()} 字符…`);
+        if (full.includes("<<<MERMAID>>>")) { $("#diagram").innerHTML = '<div class="placeholder">正在接收框图代码…</div>'; }
+      });
+    }, signal);
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+
+    const { md, mm } = parseOutput(out || "");
+    if (!md) throw new Error("AI 没有返回可用的内容，请重试。");
+    state.markdown = md; state.mermaid = mm;
+    renderNotes(md, false);
+    $("#notesTag").hidden = true;
+    setStep(2, "done");
+
+    step = 3; setStep(3, "active"); setDetail("");
+    const ok = await renderDiagram(mm);
+    setStep(3, ok ? "done" : "error");
+    $("#diagTag").hidden = true;
+    setDetail(ok ? "解析完成" : "笔记已生成；框图需要修正");
+    if (ok) toast("解析完成");
+  } catch (e) {
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+    setStep(step, "error");
+    if (e && e.cancelled) { setDetail("已停止"); toast("已停止"); }
+    else showError((e && e.message) || "出现未知错误，请重试。");
+    $("#notes").classList.remove("caret");
+    // 保留已经生成的部分内容
+    if (step === 2) {
+      const got = (e && e.partial) || lastText;
+      const md = got ? parseOutput(got.split("<<<MERMAID>>>")[0]).md : "";
+      if (md) { state.markdown = md; renderNotes(md, false); }
+      else { state.markdown = ""; $("#notes").innerHTML = '<p class="placeholder">没有生成内容。</p>'; $("#index").innerHTML = ""; }
+      $("#notesTag").textContent = "未完成";
+      $("#diagram").innerHTML = '<div class="placeholder">分析未完成，框图未绘制。</div>';
+      $("#diagTag").hidden = true;
+    }
+  } finally {
+    state.busy = false; state.ctl = null;
+    updateButtons();
+  }
+}
+
+async function fixWithAI(errMsg) {
+  if (state.busy) return;
+  clearError();
+  state.busy = true; state.ctl = new AbortController(); updateButtons();
+  $("#diagram").innerHTML = '<div class="placeholder">AI 正在修正框图代码…</div>';
+  try {
+    const out = await callModel({ mode: "fix", code: state.mermaid, error: String(errMsg).slice(0, 600) }, () => {}, state.ctl.signal);
+    const parsed = parseOutput(out || "");
+    let code = parsed.mm || out || "";
+    code = code.replace(/^\s*```(?:mermaid)?\s*/i, "").replace(/```\s*$/, "").replace("<<<END>>>", "").trim();
+    state.mermaid = code;
+    state.busy = false;
+    const ok = await renderDiagram(code);
+    setStep(3, ok ? "done" : "error");
+    toast(ok ? "框图已修正" : "仍有语法错误，可再试一次或手动修改");
+  } catch (e) {
+    if (!(e && e.cancelled)) showError((e && e.message) || "修正失败，请重试。");
+    showMermaidError(errMsg, state.mermaid);
+  } finally {
+    state.busy = false; state.ctl = null; updateButtons();
+  }
+}
+
+/* ---------- 文件选择 ---------- */
+function pickFile(f) {
+  if (!f) return;
+  clearError();
+  const isPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+  if (!isPdf) { showError("请选择 PDF 文件（.pdf）。"); return; }
+  if (f.size > 80 * 1024 * 1024) { showError("文件超过 80 MB，浏览器解析可能失败，请换一个更小的 PDF。"); return; }
+  state.file = f;
+  state.fileBase = f.name.replace(/\.pdf$/i, "").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80) || "文档";
+  $("#dropHint").innerHTML = `<span class="fname">${escapeHtml(f.name)}</span> · ${(f.size / 1024 / 1024).toFixed(2)} MB · 点击“开始解析”`;
+  updateButtons();
+}
+$("#fileInput").addEventListener("change", (e) => { pickFile(e.target.files && e.target.files[0]); e.target.value = ""; });
+const drop = $("#drop");
+["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => { const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; pickFile(f); });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => e.preventDefault());
+
+$("#analyzeBtn").addEventListener("click", analyze);
+$("#cancelBtn").addEventListener("click", () => { if (state.ctl) state.ctl.abort(); });
+
+function updateButtons() {
+  $("#analyzeBtn").disabled = state.busy || !state.file;
+  $("#analyzeBtn").textContent = state.busy ? "解析中…" : (state.isSample || !state.markdown ? "开始解析" : "重新解析");
+  $("#cancelBtn").hidden = !state.busy;
+  $("#fileInput").disabled = state.busy;
+  $("#dlMd").disabled = !state.markdown || state.busy;
+  $("#copyMd").disabled = !state.markdown || state.busy;
+  $("#dlSvg").disabled = !state.svgOk || state.busy;
+}
+
+/* ---------- 导出 ---------- */
+async function saveFile(name, data, mime) {
+  try {
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    const a = document.createElement("a"); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast("已下载 " + name);
+  } catch (e) { showError("下载失败：" + (e.message || e)); }
+}
+
+function markdownForExport() {
+  let s = state.markdown.trim() + "\n";
+  if (state.mermaid) s += "\n## 逻辑框图（Mermaid 代码）\n\n```mermaid\n" + state.mermaid.trim() + "\n```\n";
+  s += `\n---\n来源文件：${state.isSample ? "示例" : state.file ? state.file.name : state.fileBase}　生成时间：${new Date().toLocaleString("zh-CN")}\n`;
+  return s;
+}
+$("#dlMd").addEventListener("click", () => {
+  if (!state.markdown) return;
+  saveFile(`${state.fileBase}_逻辑解析.md`, markdownForExport(), "text/markdown;charset=utf-8");
+});
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast("已复制"); }
+  catch (_) {
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("已复制"); } catch (__) { toast("复制失败，请手动选择文字"); }
+    ta.remove();
+  }
+}
+$("#copyMd").addEventListener("click", () => state.markdown && copyText(markdownForExport()));
+
+// 导出时统一用浅色主题重新渲染，保证 SVG 在任何软件中都清晰
+$("#dlSvg").addEventListener("click", async () => {
+  if (!state.svgOk) return;
+  try {
+    initMermaid(false);
+    const r = await tryRender(state.mermaid);
+    initMermaid(isDark());
+    if (r.error) { showError("导出 SVG 失败：" + r.error); return; }
+    const doc = new DOMParser().parseFromString(r.svg, "image/svg+xml");
+    const svg = doc.documentElement;
+    if (svg.querySelector("parsererror")) throw new Error("SVG 内容无效");
+    const vb = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+    svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    if (vb.length === 4 && vb.every((n) => !isNaN(n))) {
+      svg.setAttribute("width", Math.ceil(vb[2])); svg.setAttribute("height", Math.ceil(vb[3]));
+      const bg = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
+      bg.setAttribute("x", vb[0]); bg.setAttribute("y", vb[1]); bg.setAttribute("width", vb[2]); bg.setAttribute("height", vb[3]); bg.setAttribute("fill", "#ffffff");
+      svg.insertBefore(bg, svg.firstChild);
+    }
+    svg.removeAttribute("style");
+    const out = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(svg);
+    saveFile(`${state.fileBase}_逻辑框图.svg`, out, "image/svg+xml;charset=utf-8");
+  } catch (e) { initMermaid(isDark()); showError("导出 SVG 失败：" + (e.message || e)); }
+});
+
+/* ---------- 访问码与服务状态 ---------- */
+$("#accessCode").value = load("pdfLogic.accessCode") || "";
+$("#accessCode").addEventListener("input", () => store("pdfLogic.accessCode", $("#accessCode").value.trim()));
+
+function setEngine(mode, text) {
+  state.mode = mode;
+  $("#engine").dataset.mode = mode;
+  $("#engineText").textContent = text;
+}
+
+/* ---------- 启动 ---------- */
+async function boot() {
+  renderNotes(SAMPLE_MD, false);
+  updateButtons();
+  if (typeof mermaid !== "undefined") await renderDiagram(SAMPLE_MMD);
+  else $("#diagram").innerHTML = '<div class="placeholder">绘图组件加载失败，请检查网络后刷新页面。</div>';
+  if (!libsReady()) showError("部分页面组件没有加载成功（需要联网加载），请检查网络后刷新页面。");
+
+  try {
+    const r = await fetch("api/config", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    const cfg = await r.json();
+    state.server = cfg;
+    if (!cfg.configured) setEngine("nokey", "服务未配置");
+    else setEngine("api", "AI 模型：" + cfg.model);
+    $("#access").hidden = !cfg.accessCodeRequired;
+  } catch (_) {
+    state.server = null;
+    setEngine("nokey", "无法连接服务器");
+    showError("无法连接到网站后端接口，AI 分析暂时不可用。请稍后刷新重试。");
+  }
+}
+boot();
+})();
+</script>
+</body>
+</html>
