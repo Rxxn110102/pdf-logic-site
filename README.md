@@ -44,7 +44,7 @@ PDF 在访客的浏览器里解析，原文件不上传。只有提取出的文�
 
    ```bash
    sudo apt-get update && sudo apt-get install -y git
-   git clone https://github.com/Rxxn110102/pdf-logic-site.git
+   git clone -b china https://github.com/Rxxn110102/pdf-logic-site.git
    cd pdf-logic-site
    ```
 
