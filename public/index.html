@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PDF逻辑解析工具</title>
 <meta name="description" content="上传 PDF，AI 自动提取要点、核心观点、方法、推理过程与结论，并生成可下载的逻辑框图。">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 /* Layout: analyst's desk — intake strip on top, notes sheet (left) beside the argument map (right); stacks on phones. */
 :root {
@@ -22,9 +19,9 @@
   --danger: #b3261e;
   --danger-soft: #fbe9e7;
   --ok: #2b7a4b;
-  --font-display: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
-  --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --font-body: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Courier New", monospace;
   --radius: 10px;
 }
 @media (prefers-color-scheme: dark) {
@@ -247,21 +244,22 @@ footer { color: var(--muted); font-size: .78rem; text-align: center; }
 </div>
 <div class="toast" id="toast" hidden></div>
 
+<!-- 前端组件：优先用本站 public/vendor 里的文件（运行 npm run vendor 下载）；缺失时依次尝试 npmmirror、jsDelivr -->
 <script src="vendor/pdf.min.js"></script>
+<script>window.pdfjsLib||document.write('<script src="https://registry.npmmirror.com/pdfjs-dist/3.11.174/files/build/pdf.min.js"><\/script>')</script>
 <script>window.pdfjsLib||document.write('<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"><\/script>')</script>
-<script>window.pdfjsLib||document.write('<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"><\/script>')</script>
 <script src="vendor/pdf.worker.min.js"></script>
+<script>window.pdfjsWorker||document.write('<script src="https://registry.npmmirror.com/pdfjs-dist/3.11.174/files/build/pdf.worker.min.js"><\/script>')</script>
 <script>window.pdfjsWorker||document.write('<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"><\/script>')</script>
-<script>window.pdfjsWorker||document.write('<script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js"><\/script>')</script>
 <script src="vendor/marked.min.js"></script>
+<script>window.marked||document.write('<script src="https://registry.npmmirror.com/marked/12.0.2/files/marked.min.js"><\/script>')</script>
 <script>window.marked||document.write('<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\/script>')</script>
-<script>window.marked||document.write('<script src="https://unpkg.com/marked@12.0.2/marked.min.js"><\/script>')</script>
 <script src="vendor/purify.min.js"></script>
+<script>window.DOMPurify||document.write('<script src="https://registry.npmmirror.com/dompurify/3.1.6/files/dist/purify.min.js"><\/script>')</script>
 <script>window.DOMPurify||document.write('<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"><\/script>')</script>
-<script>window.DOMPurify||document.write('<script src="https://unpkg.com/dompurify@3.1.6/dist/purify.min.js"><\/script>')</script>
 <script src="vendor/mermaid.min.js"></script>
+<script>window.mermaid||document.write('<script src="https://registry.npmmirror.com/mermaid/10.9.1/files/dist/mermaid.min.js"><\/script>')</script>
 <script>window.mermaid||document.write('<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"><\/script>')</script>
-<script>window.mermaid||document.write('<script src="https://unpkg.com/mermaid@10.9.1/dist/mermaid.min.js"><\/script>')</script>
 <script>
 (() => {
 "use strict";
@@ -501,13 +499,22 @@ try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onTh
 new MutationObserver(onThemeChange).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 /* ---------- PDF 解析 ---------- */
+// 中文、日文等 PDF 常用预定义 CMap，缺少它会提取不出文字。优先用本站文件。
+let cmapCache = null;
+async function cmapUrl() {
+  if (cmapCache) return cmapCache;
+  let local = false;
+  try { local = (await fetch("vendor/cmaps/UniGB-UCS2-H.bcmap", { method: "HEAD" })).ok; } catch (_) {}
+  cmapCache = local ? new URL("vendor/cmaps/", location.href).href : "https://registry.npmmirror.com/pdfjs-dist/3.11.174/files/cmaps/";
+  return cmapCache;
+}
 async function extractPdfText(file) {
   if (typeof pdfjsLib === "undefined") throw new Error("PDF 解析组件没有加载成功，请检查网络后刷新页面。");
   let buf;
   try { buf = await file.arrayBuffer(); } catch (_) { throw new Error("无法读取这个文件，请重新选择。"); }
   let pdf;
   try {
-    pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true }).promise;
+    pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true, cMapUrl: await cmapUrl(), cMapPacked: true }).promise;
   } catch (e) {
     const n = e && e.name;
     if (n === "PasswordException") throw new Error("这个 PDF 设置了密码，请先解除密码保护再上传。");

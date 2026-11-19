@@ -1,9 +1,12 @@
-把以下文件放到这个目录后，网站将优先使用本地文件，不依赖外部 CDN：
+这个目录存放网页用到的前端组件（PDF 解析、Markdown 渲染、框图绘制）。
 
-pdf.min.js        https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js
-pdf.worker.min.js https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js
-marked.min.js     https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js
-purify.min.js     https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js
-mermaid.min.js    https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js
+在项目根目录运行一次：
 
-也可以在项目根目录运行：npm run vendor
+    npm run vendor
+
+就会从 npmmirror（阿里云镜像）下载以下文件到这里，网站之后不再依赖任何外部 CDN：
+
+    pdf.min.js、pdf.worker.min.js、cmaps/（中文 PDF 文字提取需要）
+    marked.min.js、purify.min.js、mermaid.min.js
+
+deploy/install.sh 会自动执行这一步。

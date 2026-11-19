@@ -1,4 +1,4 @@
-// 本地运行 / 自有服务器部署：node dev-server.js
+// 网站服务器：node server.js（国内服务器部署、本地运行都用它）
 // 读取同目录下的 .env，提供 public/ 静态文件和 /api/* 接口。
 import http from "node:http";
 import { readFile } from "node:fs/promises";
@@ -21,8 +21,9 @@ if (existsSync(envFile)) {
   }
 }
 
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".bcmap": "application/octet-stream", ".txt": "text/plain; charset=utf-8" };
 const PORT = Number(env.PORT || 8787);
+const HOST = env.HOST || "0.0.0.0";   // 配合 Nginx 时设为 127.0.0.1，只允许本机访问
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -51,7 +52,10 @@ http.createServer(async (req, res) => {
     const file = join(pub, p);
     if (!file.startsWith(pub)) { res.writeHead(403).end(); return; }
     const data = await readFile(file);
-    res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": TYPES[extname(file)] || "application/octet-stream",
+      "cache-control": p.startsWith("vendor/") ? "public, max-age=604800" : "no-cache",
+    });
     res.end(data);
   } catch (e) {
     if (e && e.code === "ENOENT") { res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("未找到页面"); return; }
@@ -59,7 +63,7 @@ http.createServer(async (req, res) => {
     if (!res.headersSent) res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ error: "服务器内部错误" }));
   }
-}).listen(PORT, () => {
-  console.log(`PDF逻辑解析工具已启动：http://localhost:${PORT}`);
+}).listen(PORT, HOST, () => {
+  console.log(`PDF逻辑解析工具已启动：http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
   if (!env.LLM_API_KEY) console.log("提示：还没有设置 LLM_API_KEY，请复制 .env.example 为 .env 并填写。");
 });
